@@ -1,0 +1,29 @@
+---
+title: "Jeanne's Diary"
+---
+# Introduction
+
+Hi, my name is Jeanne and I am currently majoring in Business Analytics at Baruch College.
+
+# About Me
+
+Welcome to my personal website! This is a simple starter template designed for beginners. Here, I'll share insights about my projects, experiences, and much more as I build out this site over time.
+
+# My Resume
+
+If you're interested in learning more about my professional background, feel free to check out my resume: [My Resume](Jeanne%20Lin%20Resume%20JAN%202025.pdf).
+
+# Projects
+
+Stay tuned for updates on my latest projects and work.
+
+# Contact
+
+If you have any questions or would like to connect, please feel free to reach out.
+
+```{r}
+#| include: false
+1+1
+```
+--------------
+Last Updated: `r format(Sys.time(), "%A %m %d, %Y at %H:%M%p")`
