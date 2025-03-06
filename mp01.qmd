@@ -1,0 +1,311 @@
+---
+title: "MP01 Submission"
+author: Jeanne Lin
+Date: 2025-03-06
+format: html
+execute:
+    echo: false
+---
+# Introduction
+
+This document details the process for downloading, reading, cleaning, and analyzing the NYC payroll data in R for the MP01 project. The steps include:
+
+1. Downloading the data if it does not already exist.
+2. Reading and cleaning the data using the **readr**, **dplyr**, and **stringr** packages.
+3. Creating a summary table for Eric L. Adams' career.
+4. Calculating the total compensation for each employee.
+
+# 1. Downloading the Data
+
+The code below checks if the data file exists. If not, it creates the required directory, downloads the data in batches from the NYC API, and writes the combined data to a CSV file.
+
+```{r download-data, echo=TRUE}
+if(!file.exists("data/mp01/nyc_payroll_export.csv")){
+  dir.create("data/mp01", showWarnings = FALSE, recursive = TRUE)
+  
+  ENDPOINT <- "https://data.cityofnewyork.us/resource/k397-673e.json"
+  
+  if(!require("httr2")) install.packages("httr2")
+  library(httr2)
+  
+  if(!require("jsonlite")) install.packages("jsonlite")
+  library(jsonlite)
+  
+  if(!require("dplyr")) install.packages("dplyr")
+  library(dplyr)
+  
+  if(!require("readr")) install.packages("readr")
+  library(readr)
+  
+  BATCH_SIZE <- 50000
+  OFFSET     <- 0
+  END_OF_EXPORT <- FALSE
+  ALL_DATA <- list()
+  
+  while(!END_OF_EXPORT){
+    cat("Requesting items", OFFSET, "to", BATCH_SIZE + OFFSET, "\n")
+    
+    req <- request(ENDPOINT) |>
+      req_url_query(`$limit`  = BATCH_SIZE, 
+                    `$offset` = OFFSET)
+    
+    resp <- req_perform(req)
+    
+    batch_data <- fromJSON(resp_body_string(resp))
+    
+    ALL_DATA <- c(ALL_DATA, list(batch_data))
+    
+    if(NROW(batch_data) != BATCH_SIZE){
+      END_OF_EXPORT <- TRUE
+      cat("End of Data Export Reached\n")
+    } else {
+      OFFSET <- OFFSET + BATCH_SIZE
+    }
+  }
+  
+  ALL_DATA <- bind_rows(ALL_DATA)
+  
+  cat("Data export complete:", NROW(ALL_DATA), "rows and", NCOL(ALL_DATA), "columns.\n")
+  
+  write_csv(ALL_DATA, "data/mp01/nyc_payroll_export.csv")
+} else {
+  cat("Data file already exists.\n")
+}
+```
+# Reading and Cleaning the Data
+This section reads the CSV file using readr and cleans the data by converting key text columns to title case using stringr.
+
+```{r echo: false}
+library(readr)
+library(dplyr)
+library(stringr)
+
+payroll <- read_csv("data/mp01/nyc_payroll_export.csv") |>
+  mutate(
+    agency_name = str_to_title(agency_name),
+    last_name = str_to_title(last_name),
+    first_name = str_to_title(first_name),
+    work_location_borough = str_to_title(work_location_borough),
+    title_description = str_to_title(title_description),
+    leave_status_as_of_june_30 = str_to_title(leave_status_as_of_june_30)
+  )
+
+# Quickly inspect the data structure
+glimpse(payroll)
+```
+# Creating a Summary Table for Eric L. Adams' Career
+This section filters the data to include only records for Eric L. Adams, groups the data by fiscal year, and calculates his total base salary for each year. 
+
+```{r}
+adams_career <- payroll |>
+  filter(last_name == "Adams", first_name == "Eric", mid_init == "L") |>
+  group_by(fiscal_year) |>
+  summarize(
+    Total_Salary = sum(base_salary, na.rm = TRUE),
+    fiscal_year = first(fiscal_year),
+    title_description = first(title_description),
+    agency_name = first(agency_name)
+  ) |>
+  rename(
+    `Fiscal Year` = fiscal_year,
+    `Position` = title_description,
+    `Agency` = agency_name,
+    `Total Salary` = Total_Salary
+  ) |>
+  arrange(`Fiscal Year`)
+
+# Display the summary table
+adams_career
+```
+
+#  Calculating Total Compensation for Each Employee
+This section adds a new column total_compensation to the payroll data frame using a series of conditions:
+
+First condition: For Eric L. Adams, the total compensation is his fixed base_salary.
+Second condition: If an employee has overtime hours, calculate regular pay as
+base_salary * regular_hours and overtime pay as
+base_salary * ot_hours * 1.5, then add them together.
+Third condition: For all other cases, assume a day rate payment computed as
+base_salary * ((regular_hours + ot_hours) / 7.5).
+
+```{r}
+payroll <- payroll |>
+  mutate(
+    total_compensation = case_when(
+      # For Eric L. Adams: use the fixed base_salary
+      last_name == "Adams" & first_name == "Eric" & mid_init == "L" ~ base_salary,
+      
+      # If overtime hours exist: calculate total pay including overtime
+      !is.na(ot_hours) ~ base_salary * regular_hours + base_salary * ot_hours * 1.5,
+      
+      # Otherwise: assume the employee is paid a day rate
+      TRUE ~ base_salary * ((regular_hours + ot_hours) / 7.5)
+    )
+  )
+
+# Display a sample of the updated payroll data
+head(payroll)
+```
+
+# Additional Analysis
+In this section, we calculate an annualized base pay for each job title and identify the individual with the highest total city payroll.
+
+```{r}
+job_title_pay <- payroll |>
+  group_by(title_description) |>
+  summarize(max_annual_base = max(base_salary, na.rm = TRUE)) |>
+  arrange(desc(max_annual_base))
+
+# Display the job title with the highest annual base pay
+job_title_pay[1, ]
+```
+
+In this section, we calcuate the indiviual with the most overtime hours.
+```{r}
+most_overtime <- payroll |>
+  filter(ot_hours == max(ot_hours, na.rm = TRUE)) |>
+  select(first_name, last_name, fiscal_year, ot_hours)
+
+most_overtime
+```
+
+In this section, we calculate which agency has the highest average total annual payroll (base and overtime pay per employee).
+```{r}
+agency_avg_pay <- payroll |>
+  group_by(agency_name) |>
+  summarize(avg_total_pay = mean(total_compensation, na.rm = TRUE)) |>
+  arrange(desc(avg_total_pay))
+
+agency_avg_pay[1, ]
+```
+
+In this section, we calculate many employees are in each agency and then each fiscal_year, keep only the agency with the maximum employee count.
+
+```{r}
+agency_employee_count <- payroll |>
+  group_by(fiscal_year, agency_name) |>
+  summarize(num_employees = n(), .groups = "drop") |>
+  arrange(fiscal_year, desc(num_employees))
+
+agency_employee_count
+```
+```{r}
+top_agency_each_year <- agency_employee_count |>
+  group_by(fiscal_year) |>
+  slice(1) |>
+  ungroup()
+
+top_agency_each_year
+```
+
+In this section, we calculate which agency has the highest overtime usage (compared to regular hours).
+```{r}
+agency_overtime <- payroll |>
+  group_by(agency_name) |>
+  summarize(
+    total_overtime = sum(ot_hours, na.rm = TRUE),
+    total_regular = sum(regular_hours, na.rm = TRUE)
+  ) |>
+  mutate(overtime_ratio = total_overtime / total_regular) |>
+  arrange(desc(overtime_ratio))
+
+agency_overtime[1, ]
+```
+
+In this section, we calculate how much has the city’s aggregate payroll grown over the past 10 years.
+
+```{r}
+aggregate_payroll <- payroll |>
+  group_by(fiscal_year) |>
+  summarize(total_payroll = sum(total_compensation, na.rm = TRUE)) |>
+  arrange(fiscal_year)
+
+aggregate_payroll
+```
+
+# Policy Analysis
+
+Policy I: Capping Salaries at Mayoral Level
+For each fiscal year, identify the mayor’s total compensation.
+```{r}
+mayor_pay <- payroll |>
+  filter(first_name == "Eric", last_name == "Adams", mid_init == "L") |>
+  select(fiscal_year, mayor_total = total_compensation)
+
+mayor_pay
+```
+
+For every other employee in that same year who earned more than the mayor, compute how much would be “saved” if their pay were capped at the mayor’s salary.
+
+```{r}
+capped_payroll <- payroll |>
+  left_join(mayor_pay, by = "fiscal_year") |>
+  mutate(
+    # If an employee's pay exceeds the mayor's pay, cap it;
+    # Otherwise, keep the original total_compensation.
+    capped_compensation = if_else(total_compensation > mayor_total, mayor_total, total_compensation),
+    # Compute the savings for records that exceed the mayor's pay.
+    savings = if_else(total_compensation > mayor_total, total_compensation - mayor_total, 0)
+  )
+
+capped_payroll
+```
+
+Summarize the total savings, and identify which agencies and job titles would be most affected.
+```{r}
+savings_summary <- capped_payroll |>
+  group_by(fiscal_year) |>
+  summarize(
+    total_savings = sum(savings, na.rm = TRUE),
+    employees_capped = sum(total_compensation > mayor_total, na.rm = TRUE)
+  ) |>
+  arrange(fiscal_year)
+
+savings_summary
+```
+
+In each fiscal year, a significant total amount would be saved if every employee earning above the mayor’s annual compensation were capped at that level.
+For example, in fiscal years such as 2014 through 2024, tens of trillions (in your data’s units) could be saved, and hundreds of thousands of employees would be affected.
+
+Recommendation:
+While the financial savings appear substantial, this policy would impact a large number of employees across various agencies and job titles. Before adopting the policy, consider the following points:
+
+Cost Savings vs. Operational Impact:
+The potential payroll savings are impressive, but capping salaries might have unintended consequences on recruitment, retention, and employee morale; especially for positions where the market rate for talent exceeds the mayor's salary.
+
+Agency-Specific Impacts:
+The analysis identifies certain agencies and job titles that would bear the brunt of this policy. A one-size-fits-all cap might not account for the differences in responsibilities or market conditions across departments.
+
+Equity and Incentives:
+While the policy promotes fiscal discipline, it could also limit incentives for experienced professionals and high-performing staff who may be essential for maintaining efficient service delivery.
+
+Policy III: Limit overtime hours for hourly employees. For example, cap overtime to 10 hours per week per employee.
+
+Calculations:
+Current Overtime Expense:
+Use data to sum the overtime cost for all employees using the current formula:
+```{r}
+current_overtime_cost <- payroll %>%
+  summarize(total_overtime_cost = sum(base_salary * ot_hours * 1.5, na.rm = TRUE))
+
+current_overtime_cost
+```
+
+Adjusted Overtime Expense:
+If the cap is 10 hours per week, then over 52 weeks that’s 520 overtime hours maximum per employee. Then recalculate overtime pay:
+```{r}
+payroll_adjusted <- payroll %>%
+  mutate(adjusted_overtime_hours = ifelse(ot_hours > 520, 520, ot_hours),
+         adjusted_overtime_cost = base_salary * adjusted_overtime_hours * 1.5)
+
+adjusted_overtime_total <- payroll_adjusted %>%
+  summarize(total_adjusted_overtime_cost = sum(adjusted_overtime_cost, na.rm = TRUE))
+
+adjusted_overtime_total
+```
+
+Staffing Adjustments:
+If overtime is capped, some employees may not be able to cover all required hours. The city may need to hire additional staff to cover the gap in service hours.
+
+Recommendation:
+If the savings from reduced overtime outweigh the cost of hiring additional employees and if service levels can be maintained this policy could reduce payroll expenses. I would recommend piloting the cap in selected departments to evaluate real-world impacts before full implementation.
